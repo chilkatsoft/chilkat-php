@@ -1,0 +1,30 @@
+{
+    "name": "chilkat/chilkat",
+    "description": "Chilkat PHP extension: the CkHttp, CkCrypt2, CkEmail, CkZip, CkFtp2, CkSsh, ... classes, plus vendor/bin/chilkat-install which installs the matching native extension (chilkat.so / chilkat.dll) for your PHP.",
+    "type": "library",
+    "license": "proprietary",
+    "homepage": "https://www.chilkatsoft.com/php.asp",
+    "keywords": ["chilkat", "extension", "crypto", "encryption", "email", "smtp", "imap", "ftp", "sftp", "ssh", "http", "rest", "zip", "xml", "json", "pdf", "certificates", "jwt", "oauth2"],
+    "support": {
+        "docs": "https://www.chilkatsoft.com/refdoc/",
+        "email": "support@chilkatsoft.com",
+        "forum": "https://www.chilkatforum.com/",
+        "issues": "https://www.chilkatforum.com/"
+    },
+    "authors": [
+        { "name": "Chilkat Software, Inc.", "homepage": "https://www.chilkatsoft.com/" }
+    ],
+    "require": {
+        "php": ">=7.2"
+    },
+    "suggest": {
+        "ext-chilkat": "The native extension the classes call into; installed by vendor/bin/chilkat-install (see README).",
+        "ext-curl": "Lets chilkat-install download the extension with the curl extension instead of stream wrappers.",
+        "ext-zlib": "Lets chilkat-install extract the .tar.gz packages without a tar command."
+    },
+    "autoload": {
+        "classmap": ["src/"],
+        "files": ["src/bootstrap.php"]
+    },
+    "bin": ["bin/chilkat-install"]
+}
