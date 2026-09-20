@@ -298,15 +298,21 @@ if (!$opt['no-ini']) {
 
 // ----------------------------------------------------------------------------------------------- 6. verify in a fresh PHP
 say("Verifying...");
-$extra = ($opt['no-ini'] || $iniDone === '') ? ' -d ' . escapeshellarg("extension=$installPath") : '';
-$ckv = trim((string)shell_exec(escapeshellarg(PHP_BINARY) . $extra . ' -r ' . escapeshellarg('echo extension_loaded("chilkat") ? phpversion("chilkat") : "";') . ' 2>&1'));
+// A fresh PHP process (this one has the old extension loaded).  The check is a file, not -r code: on Windows
+// escapeshellarg() turns embedded double quotes into spaces, which would break any inline PHP.
+$extra = ($opt['no-ini'] || $iniDone === '') ? array('-d', "extension=$installPath") : array();
+$verifyPhp = $tmp . DIRECTORY_SEPARATOR . 'verify.php';
+file_put_contents($verifyPhp, "<?php echo extension_loaded('chilkat') ? phpversion('chilkat') : '';\n");
+list($ckv, $rc) = runPhp(array_merge($extra, array($verifyPhp)), $tmp);
+$ckv = trim($ckv);
 if ($ckv === '' || !preg_match('/^[\d.]+$/', $ckv)) {
     fail("PHP did not load the extension" . ($ckv !== '' ? ":\n$ckv" : '') . "\nTry:  " . PHP_BINARY . " -d extension=$installPath -m");
 }
 info("PHP loads chilkat extension v$ckv");
 if (is_file("$pkgDir/test.php")) {
-    $out = shell_exec('cd ' . escapeshellarg($pkgDir) . ' && ' . escapeshellarg(PHP_BINARY) . $extra . ' test.php 2>&1');
-    foreach (explode("\n", rtrim((string)$out)) as $line) echo "    ", $line, "\n";
+    list($out, $rc) = runPhp(array_merge($extra, array('test.php')), $pkgDir);
+    foreach (explode("\n", rtrim($out)) as $line) echo "    ", $line, "\n";
+    if ($rc !== 0) warn("test.php exited with status $rc");
 }
 
 say("");
@@ -343,6 +349,20 @@ function removeFile($path) {
     }
     warn("could not remove $path");
     return false;
+}
+
+// Runs PHP_BINARY with the given arguments in $cwd; returns array(combined output, exit code).
+function runPhp(array $args, $cwd) {
+    $cmd = escapeshellarg(PHP_BINARY);
+    foreach ($args as $a) $cmd .= ' ' . escapeshellarg($a);
+    $spec = array(0 => array('pipe', 'r'), 1 => array('pipe', 'w'), 2 => array('pipe', 'w'));
+    $p = proc_open($cmd, $spec, $pipes, $cwd);
+    if (!is_resource($p)) return array('(could not start ' . PHP_BINARY . ')', -1);
+    fclose($pipes[0]);
+    $out = stream_get_contents($pipes[1]); fclose($pipes[1]);
+    $err = stream_get_contents($pipes[2]); fclose($pipes[2]);
+    $rc = proc_close($p);
+    return array($out . $err, $rc);
 }
 
 function isAbsolute($p) { return preg_match('~^([a-zA-Z]:[\\\\/]|\\\\\\\\|/)~', $p) === 1; }
