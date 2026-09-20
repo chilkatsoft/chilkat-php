@@ -173,7 +173,7 @@ if ($opt['uninstall']) {
             if ($new !== $txt) { copy($iniFile, "$iniFile.bak"); file_put_contents($iniFile, $new); info("removed the extension line from $iniFile (backup: $iniFile.bak)"); }
         }
     }
-    if (is_file($installPath)) { unlink($installPath); info("removed $installPath"); }
+    if (is_file($installPath)) { if (removeFile($installPath)) info("removed $installPath"); }
     say("Done.");
     exit(0);
 }
@@ -256,7 +256,7 @@ $pkgDir = dirname($soSrc);
 
 // ----------------------------------------------------------------------------------------------- 4. install
 if (!is_dir($installDir) && !mkdir($installDir, 0755, true)) fail("cannot create $installDir");
-if (!copy($soSrc, $installPath)) fail("cannot copy $soName to $installDir");
+if (!replaceFile($soSrc, $installPath)) fail("cannot copy $soName to $installDir");
 @chmod($installPath, 0644);
 info("installed $installPath");
 
@@ -318,6 +318,33 @@ if ($opt['keep']) say("Downloaded package kept in $tmp");
 exit(0);
 
 // =============================================================================================== helpers
+// Copies $src over $dst.  On Windows the running PHP has usually loaded the very chilkat.dll being replaced
+// (the extension is enabled in php.ini), which locks the file against overwriting -- but a loaded DLL can be
+// renamed, so it is moved aside as chilkat.dll.old.* and the new one copied in; the .old files are deleted on
+// the next run (or by the OS once nothing has them open).
+function replaceFile($src, $dst) {
+    foreach (glob($dst . '.old.*') ?: array() as $stale) @unlink($stale);
+    if (@copy($src, $dst)) return true;
+    if (!is_file($dst)) return false;
+    $aside = $dst . '.old.' . getmypid();
+    if (!@rename($dst, $aside)) return false;
+    if (@copy($src, $dst)) { info("(the previous $dst was in use and was moved aside as " . basename($aside) . ")"); return true; }
+    @rename($aside, $dst);
+    return false;
+}
+
+// Deletes a file, or on Windows renames it aside when it is in use (loaded by this or another PHP).
+function removeFile($path) {
+    foreach (glob($path . '.old.*') ?: array() as $stale) @unlink($stale);
+    if (@unlink($path)) return true;
+    if (DIRECTORY_SEPARATOR === '\\' && @rename($path, $path . '.old.' . getmypid())) {
+        info("$path is in use; it was renamed to " . basename($path . '.old.' . getmypid()) . " and will be deleted on the next run");
+        return true;
+    }
+    warn("could not remove $path");
+    return false;
+}
+
 function isAbsolute($p) { return preg_match('~^([a-zA-Z]:[\\\\/]|\\\\\\\\|/)~', $p) === 1; }
 
 function commandExists($cmd) {
