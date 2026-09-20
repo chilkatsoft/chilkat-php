@@ -61,12 +61,38 @@ vendor/bin/chilkat-install [--dry-run] [--no-ini] [--dir=DIR] [--version=X.Y.Z] 
 * `--no-ini` installs the file and prints the `extension=` line for you to add yourself.
 * `--uninstall` removes the extension file and the ini entry it wrote.
 * If PHP runs under a web server or PHP-FPM, restart it after installing so it picks up the extension.
-* Docker: `RUN composer require chilkat/chilkat && vendor/bin/chilkat-install` works as-is in the official
-  `php:*` images (they have the conf.d directory and run as root during the build).
 
 Without Composer, the same installer exists as a shell script and a PowerShell script:
 `curl -fsSL https://chilkatdownload.com/php/install-php.sh | sudo sh` and
 `irm https://chilkatdownload.com/php/install-php.ps1 | iex` — see https://www.chilkatsoft.com/php.asp.
+
+## Docker and CI
+
+In a Dockerfile based on the official `php` images (Alpine or Debian; cli, fpm, apache) the build runs as root and
+the extension is enabled through `$PHP_INI_DIR/conf.d` for every SAPI, so:
+
+```Dockerfile
+FROM php:8.3-cli-alpine
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+WORKDIR /app
+COPY . .
+RUN composer install --no-dev --no-interaction && vendor/bin/chilkat-install
+```
+
+Without Composer, `RUN curl -fsSL https://chilkatdownload.com/php/install-php.sh | sh` does the same for the
+image's PHP (`| sh -s -- --version 11.6.1` pins the Chilkat version). On Alpine both installers also add the
+`libstdc++` package, which the minimal `php:*-alpine` images do not ship and `chilkat.so` needs. In a multi-stage
+build, run the installer in the final stage.
+
+GitHub Actions (PHP from `shivammathur/setup-php` keeps a root-owned `extension_dir`, hence `sudo`):
+
+```yaml
+- uses: shivammathur/setup-php@v2
+  with:
+    php-version: '8.3'
+- run: composer install --no-interaction
+- run: sudo php vendor/bin/chilkat-install
+```
 
 ## License
 
