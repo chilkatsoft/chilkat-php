@@ -263,7 +263,22 @@ info("installed $installPath");
 $iniDone = '';
 if (!$opt['no-ini']) {
     $body = "; Chilkat PHP extension (installed by chilkat-install, Chilkat v$version)\n$iniLine\n";
-    if ($modsDir !== '') {
+    // Already enabled by an ini file this script did not write (a hand edit, or a distro package)?  Then adding a
+    // second extension= line would make PHP warn "Module chilkat is already loaded" on every start.
+    $ours = array();
+    if ($modsDir !== '') $ours[] = realpath("$modsDir/chilkat.ini") ?: "$modsDir/chilkat.ini";
+    if ($scanDir !== '') $ours[] = realpath("$scanDir/chilkat.ini") ?: "$scanDir/chilkat.ini";
+    $foreign = array();
+    foreach (findEnablingIniFiles() as $f) {
+        $rf = realpath($f) ?: $f;
+        if (!in_array($rf, $ours, true) && strpos(file_get_contents($f), '; Chilkat PHP extension (installed by') === false) $foreign[] = $f;
+    }
+    if ($foreign) {
+        $iniDone = implode(', ', $foreign) . " (already enabled there; nothing added)";
+        // an ini of ours from an earlier run would be a second enable line: drop it
+        if ($modsDir !== '' && is_file("$modsDir/chilkat.ini")) { run("phpdismod -v " . escapeshellarg($phpVer) . " chilkat"); @unlink("$modsDir/chilkat.ini"); info("removed the duplicate $modsDir/chilkat.ini"); }
+        if ($scanDir !== '' && is_file("$scanDir/chilkat.ini")) { @unlink("$scanDir/chilkat.ini"); info("removed the duplicate $scanDir/chilkat.ini"); }
+    } elseif ($modsDir !== '') {
         file_put_contents("$modsDir/chilkat.ini", $body);
         run("phpenmod -v " . escapeshellarg($phpVer) . " chilkat");
         $iniDone = "$modsDir/chilkat.ini (enabled for all SAPIs with phpenmod)";
@@ -303,11 +318,15 @@ $extra = ($opt['no-ini'] || $iniDone === '') ? array('-d', "extension=$installPa
 $verifyPhp = $tmp . DIRECTORY_SEPARATOR . 'verify.php';
 file_put_contents($verifyPhp, "<?php echo extension_loaded('chilkat') ? phpversion('chilkat') : '';\n");
 list($ckv, $rc) = runPhp(array_merge($extra, array($verifyPhp)), $tmp);
-$ckv = trim($ckv);
-if ($ckv === '' || !preg_match('/^[\d.]+$/', $ckv)) {
-    fail("PHP did not load the extension" . ($ckv !== '' ? ":\n$ckv" : '') . "\nTry:  " . PHP_BINARY . " -d extension=$installPath -m");
+$ckvRaw = trim($ckv);
+$ckv = preg_match('/^(\d+\.\d+\.\d+)/', $ckvRaw, $mm) ? $mm[1] : '';
+if ($ckv === '') {
+    fail("PHP did not load the extension" . ($ckvRaw !== '' ? ":\n$ckvRaw" : '') . "\nTry:  " . PHP_BINARY . " -d extension=$installPath -m");
 }
 info("PHP loads chilkat extension v$ckv");
+if (stripos($ckvRaw, 'already loaded') !== false) {
+    warn("PHP reports the chilkat extension is enabled more than once -- remove the duplicate extension= line from one of: " . implode(', ', findEnablingIniFiles()));
+}
 if (is_file("$pkgDir/test.php")) {
     list($out, $rc) = runPhp(array_merge($extra, array('test.php')), $pkgDir);
     foreach (explode("\n", rtrim($out)) as $line) echo "    ", $line, "\n";
@@ -370,6 +389,21 @@ function runPhp(array $args, $cwd) {
     $err = stream_get_contents($pipes[2]); fclose($pipes[2]);
     $rc = proc_close($p);
     return array($out . $err, $rc);
+}
+
+// Every ini file PHP read at startup (php.ini + the scanned conf.d files) that enables the chilkat extension.
+function findEnablingIniFiles() {
+    $files = array();
+    $main = php_ini_loaded_file();
+    if ($main) $files[] = $main;
+    $scanned = php_ini_scanned_files();
+    if ($scanned) foreach (explode(',', $scanned) as $f) { $f = trim($f); if ($f !== '') $files[] = $f; }
+    $hits = array();
+    foreach ($files as $f) {
+        if (!is_file($f)) continue;
+        if (preg_match('/^\s*extension\s*=\s*"?[^\r\n;]*chilkat/m', file_get_contents($f))) $hits[] = $f;
+    }
+    return $hits;
 }
 
 function isAbsolute($p) { return preg_match('~^([a-zA-Z]:[\\\\/]|\\\\\\\\|/)~', $p) === 1; }
