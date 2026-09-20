@@ -362,53 +362,94 @@ function needWritable(array $dirs, $iniFile) {
 }
 
 function fetchManifest($url) {
-    $json = httpGet($url);
-    if ($json === null) return null;
+    $err = '';
+    $json = fetchUrl($url, null, $err);
+    if ($json === null) {
+        if ($err !== '404') warn("could not fetch $url: $err");     // a 404 is normal for an old version's manifest
+        return null;
+    }
     $m = json_decode($json, true);
     if (!is_array($m) || empty($m['builds'])) { warn("$url is not a valid manifest"); return null; }
     return $m;
 }
 
-function httpGet($url) {
-    if (function_exists('curl_init')) {
-        $ch = curl_init($url);
-        curl_setopt_array($ch, array(CURLOPT_RETURNTRANSFER => true, CURLOPT_FOLLOWLOCATION => true, CURLOPT_FAILONERROR => true, CURLOPT_CONNECTTIMEOUT => 20, CURLOPT_TIMEOUT => 120));
-        $body = curl_exec($ch);
-        curl_close($ch);
-        return $body === false ? null : $body;
-    }
-    if (ini_get('allow_url_fopen')) {
-        $body = @file_get_contents($url, false, stream_context_create(array('http' => array('timeout' => 120, 'follow_location' => 1))));
-        return $body === false ? null : $body;
-    }
-    if (commandExists('curl')) {
-        $body = shell_exec('curl -fsSL ' . escapeshellarg($url));
-        return ($body === null || $body === '') ? null : $body;
-    }
-    return null;
-}
+function httpGet($url) { $err = ''; return fetchUrl($url, null, $err); }
 
 function download($url, $dest) {
+    $err = '';
+    if (fetchUrl($url, $dest, $err) !== null) return true;
+    warn($err);
+    return false;
+}
+
+// Fetches a URL into a string ($toFile === null) or a file.  Returns the string / the file path, or null.
+// $err receives '404' for a missing URL, otherwise a description of the last failure.
+// Tries, in order: the curl extension (told to use the Windows certificate store when libcurl can, since a
+// PHP zip install has no CA bundle); the curl command (Windows 10+ ships one that uses the system store);
+// PHP's https stream wrapper; wget.
+function fetchUrl($url, $toFile, &$err) {
+    $err = '';
+    $tried = array();
+    $isWin = DIRECTORY_SEPARATOR === '\\';
+
     if (function_exists('curl_init')) {
-        $fp = fopen($dest, 'wb');
-        if (!$fp) return false;
         $ch = curl_init($url);
-        curl_setopt_array($ch, array(CURLOPT_FILE => $fp, CURLOPT_FOLLOWLOCATION => true, CURLOPT_FAILONERROR => true, CURLOPT_CONNECTTIMEOUT => 20, CURLOPT_TIMEOUT => 600));
-        $ok = curl_exec($ch);
-        curl_close($ch); fclose($fp);
-        return $ok !== false;
+        $opts = array(CURLOPT_FOLLOWLOCATION => true, CURLOPT_CONNECTTIMEOUT => 20, CURLOPT_TIMEOUT => 600, CURLOPT_USERAGENT => 'chilkat-install');
+        if (defined('CURLSSLOPT_NATIVE_CA')) $opts[CURLOPT_SSL_OPTIONS] = CURLSSLOPT_NATIVE_CA;
+        $fp = null;
+        if ($toFile === null) $opts[CURLOPT_RETURNTRANSFER] = true;
+        else { $fp = fopen($toFile, 'wb'); if (!$fp) { $err = "cannot write $toFile"; return null; } $opts[CURLOPT_FILE] = $fp; }
+        curl_setopt_array($ch, $opts);
+        $body = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $cerr = curl_error($ch);
+        if (PHP_VERSION_ID < 80000) curl_close($ch);
+        if ($fp) fclose($fp);
+        if ($body !== false && $code >= 200 && $code < 300) return $toFile === null ? $body : $toFile;
+        if ($fp) @unlink($toFile);
+        if ($code === 404) { $err = '404'; return null; }
+        $tried[] = 'curl extension: ' . ($cerr !== '' ? $cerr : "HTTP $code");
     }
+
+    if (commandExists('curl')) {
+        $cmd = 'curl -fsSL --connect-timeout 20 ' . ($toFile !== null ? '-o ' . escapeshellarg($toFile) . ' ' : '') . escapeshellarg($url) . ' 2>&1';
+        $out = array(); $rc = 1;
+        exec($cmd, $out, $rc);
+        if ($rc === 0) {
+            if ($toFile !== null) return $toFile;
+            // exec() split the body into lines; re-fetch as one string
+            $body = shell_exec('curl -fsSL --connect-timeout 20 ' . escapeshellarg($url));
+            if ($body !== null && $body !== '') return $body;
+        }
+        if ($rc === 22 && strpos(implode(' ', $out), '404') !== false) { $err = '404'; return null; }
+        $tried[] = 'curl command: exit ' . $rc . ' ' . trim(implode(' ', $out));
+        if ($toFile !== null) @unlink($toFile);
+    }
+
     if (ini_get('allow_url_fopen')) {
-        $in = @fopen($url, 'rb', false, stream_context_create(array('http' => array('timeout' => 600, 'follow_location' => 1))));
-        if (!$in) return false;
-        $out = fopen($dest, 'wb');
-        stream_copy_to_stream($in, $out);
-        fclose($in); fclose($out);
-        return true;
+        $ctx = stream_context_create(array('http' => array('timeout' => 600, 'follow_location' => 1, 'user_agent' => 'chilkat-install', 'ignore_errors' => true)));
+        $body = @file_get_contents($url, false, $ctx);
+        $status = 0;
+        if (isset($http_response_header[0]) && preg_match('~ (\d{3}) ~', $http_response_header[0], $mm)) $status = (int)$mm[1];
+        if ($body !== false && $status >= 200 && $status < 300) {
+            if ($toFile === null) return $body;
+            if (file_put_contents($toFile, $body) !== false) return $toFile;
+        }
+        if ($status === 404) { $err = '404'; return null; }
+        $e = error_get_last();
+        $tried[] = 'https stream: ' . ($status ? "HTTP $status" : (($e && isset($e['message'])) ? $e['message'] : 'failed'));
     }
-    if (commandExists('curl')) { shell_exec('curl -fsSL -o ' . escapeshellarg($dest) . ' ' . escapeshellarg($url)); return is_file($dest); }
-    if (commandExists('wget')) { shell_exec('wget -q -O ' . escapeshellarg($dest) . ' ' . escapeshellarg($url)); return is_file($dest); }
-    fail("no way to download (no curl extension, allow_url_fopen is off, and no curl/wget command)");
+
+    if (!$isWin && commandExists('wget')) {
+        $out = array(); $rc = 1;
+        exec('wget -q ' . ($toFile !== null ? '-O ' . escapeshellarg($toFile) : '-O -') . ' ' . escapeshellarg($url) . ' 2>&1', $out, $rc);
+        if ($rc === 0) return $toFile !== null ? $toFile : implode("\n", $out);
+        if ($rc === 8) { $err = '404'; return null; }
+        $tried[] = 'wget: exit ' . $rc;
+    }
+
+    $err = $tried ? implode('; ', $tried) : 'no way to download (no curl extension or command, allow_url_fopen is off, no wget)';
+    return null;
 }
 
 function extractPackage($pkg, $dir) {
