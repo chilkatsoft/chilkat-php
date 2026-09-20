@@ -257,7 +257,6 @@ $pkgDir = dirname($soSrc);
 // ----------------------------------------------------------------------------------------------- 4. install
 if (!is_dir($installDir) && !mkdir($installDir, 0755, true)) fail("cannot create $installDir");
 if (!replaceFile($soSrc, $installPath)) fail("cannot copy $soName to $installDir");
-@chmod($installPath, 0644);
 info("installed $installPath");
 
 // ----------------------------------------------------------------------------------------------- 5. enable
@@ -324,18 +323,26 @@ if ($opt['keep']) say("Downloaded package kept in $tmp");
 exit(0);
 
 // =============================================================================================== helpers
-// Copies $src over $dst.  On Windows the running PHP has usually loaded the very chilkat.dll being replaced
-// (the extension is enabled in php.ini), which locks the file against overwriting -- but a loaded DLL can be
-// renamed, so it is moved aside as chilkat.dll.old.* and the new one copied in; the .old files are deleted on
-// the next run (or by the OS once nothing has them open).
+// Installs $src as $dst without ever writing into a file that a running PHP may have mapped: the running
+// installer itself usually has the old chilkat.so/.dll loaded, and on Linux overwriting a mapped shared object
+// in place corrupts that process (it crashes at shutdown), while on Windows the loaded file is simply locked.
+// So the new file is written next to the old one and renamed over it (atomic on POSIX, the old inode lives on
+// until every process using it exits).  Windows cannot rename over a loaded DLL, but it can rename the loaded
+// DLL away, so it is moved aside as chilkat.dll.old.* first; the .old files are deleted on the next run.
 function replaceFile($src, $dst) {
     foreach (glob($dst . '.old.*') ?: array() as $stale) @unlink($stale);
-    if (@copy($src, $dst)) return true;
-    if (!is_file($dst)) return false;
-    $aside = $dst . '.old.' . getmypid();
-    if (!@rename($dst, $aside)) return false;
-    if (@copy($src, $dst)) { info("(the previous $dst was in use and was moved aside as " . basename($aside) . ")"); return true; }
-    @rename($aside, $dst);
+    $tmp = $dst . '.new.' . getmypid();
+    if (!@copy($src, $tmp)) return false;
+    @chmod($tmp, 0644);
+    if (@rename($tmp, $dst)) return true;
+    if (is_file($dst)) {
+        $aside = $dst . '.old.' . getmypid();
+        if (@rename($dst, $aside)) {
+            if (@rename($tmp, $dst)) { info("(the previous $dst was in use and was moved aside as " . basename($aside) . ")"); return true; }
+            @rename($aside, $dst);
+        }
+    }
+    @unlink($tmp);
     return false;
 }
 
