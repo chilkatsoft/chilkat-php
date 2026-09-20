@@ -17,8 +17,11 @@ a `chilkat.ini` in the conf.d directory on Alpine, RHEL/Fedora, Homebrew and the
 PHP loads it. Supported: PHP 7.2 – 8.5 on Linux (x86_64, x86, arm64, armv7l), Alpine Linux (x86_64, arm64),
 macOS (Apple silicon, Intel) and Windows (x64, x86; TS and NTS).
 
-The package version is the Chilkat version (`11.6.1` installs Chilkat 11.6.1), so the classes and the extension
-always match. Updating is `composer update chilkat/chilkat` followed by `vendor/bin/chilkat-install` again.
+The package version is the Chilkat version (`11.6.1` installs Chilkat 11.6.1; a fourth number, e.g. `11.6.1.3`, is a
+fix to the package itself and still installs Chilkat 11.6.1), so the classes and the extension always match.
+Updating is `composer update chilkat/chilkat` followed by `vendor/bin/chilkat-install` again. Let `composer require`
+write its usual caret constraint (`"chilkat/chilkat": "^11.6"`) rather than pinning an exact version, so those
+updates come through.
 
 ## Usage
 
