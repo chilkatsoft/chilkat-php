@@ -409,6 +409,7 @@ function fetchUrl($url, $toFile, &$err) {
         if ($fp) @unlink($toFile);
         if ($code === 404) { $err = '404'; return null; }
         $tried[] = 'curl extension: ' . ($cerr !== '' ? $cerr : "HTTP $code");
+        warn(end($tried) . " -- trying another way to download");
     }
 
     if (commandExists('curl')) {
@@ -423,6 +424,7 @@ function fetchUrl($url, $toFile, &$err) {
         }
         if ($rc === 22 && strpos(implode(' ', $out), '404') !== false) { $err = '404'; return null; }
         $tried[] = 'curl command: exit ' . $rc . ' ' . trim(implode(' ', $out));
+        warn(end($tried) . " -- trying another way to download");
         if ($toFile !== null) @unlink($toFile);
     }
 
@@ -430,7 +432,8 @@ function fetchUrl($url, $toFile, &$err) {
         $ctx = stream_context_create(array('http' => array('timeout' => 600, 'follow_location' => 1, 'user_agent' => 'chilkat-install', 'ignore_errors' => true)));
         $body = @file_get_contents($url, false, $ctx);
         $status = 0;
-        if (isset($http_response_header[0]) && preg_match('~ (\d{3}) ~', $http_response_header[0], $mm)) $status = (int)$mm[1];
+        $hdrs = function_exists('http_get_last_response_headers') ? http_get_last_response_headers() : (isset($http_response_header) ? $http_response_header : null);
+        if (is_array($hdrs) && isset($hdrs[0]) && preg_match('~ (\d{3}) ~', $hdrs[0], $mm)) $status = (int)$mm[1];
         if ($body !== false && $status >= 200 && $status < 300) {
             if ($toFile === null) return $body;
             if (file_put_contents($toFile, $body) !== false) return $toFile;
@@ -438,6 +441,7 @@ function fetchUrl($url, $toFile, &$err) {
         if ($status === 404) { $err = '404'; return null; }
         $e = error_get_last();
         $tried[] = 'https stream: ' . ($status ? "HTTP $status" : (($e && isset($e['message'])) ? $e['message'] : 'failed'));
+        warn(end($tried) . " -- trying another way to download");
     }
 
     if (!$isWin && commandExists('wget')) {
